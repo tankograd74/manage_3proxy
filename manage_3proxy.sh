@@ -1,233 +1,125 @@
 #!/bin/bash
 
-set -e  # Остановить выполнение при ошибке
+set -e  # Прерывать выполнение при ошибках
 
 CONFIG_FILE="/etc/3proxy/3proxy.cfg"
 SERVICE_FILE="/etc/systemd/system/3proxy.service"
 LOG_FILE="/var/log/3proxy.log"
+BIN_DIR="/usr/local/bin/3proxy"
+DEFAULT_PROXY_PORT=1080
 
-function check_installed() {
-    if [ -f "$CONFIG_FILE" ]; then
-        echo "3proxy уже установлен на этом сервере."
-        return 0
-    else
-        return 1
-    fi
+# Проверка root-прав
+if [ "$(id -u)" -ne 0 ]; then
+    echo "Скрипт должен быть запущен с правами суперпользователя (root)." >&2
+    exit 1
+fi
+
+function install_dependencies() {
+    echo "Установка необходимых пакетов..."
+    apt update
+    apt install -y build-essential git gcc make openssl ufw
 }
 
-function install_3proxy() {
-    echo "Установка необходимых пакетов..."
-    sudo apt update
-    sudo apt install -y git build-essential openssl ufw
-
+function clone_and_build_3proxy() {
     echo "Скачивание и компиляция 3proxy..."
+    if [ -d "3proxy" ]; then
+        echo "Каталог '3proxy' уже существует. Удаляю старый каталог..."
+        rm -rf 3proxy
+    fi
+
     git clone https://github.com/3proxy/3proxy.git
     cd 3proxy
     make -f Makefile.Linux
-    sudo make install
-
-    echo "Создание папки для конфигурации..."
-    sudo mkdir -p /etc/3proxy
-    cd /etc/3proxy
+    cd ..
 }
 
-function setup_proxy() {
-    echo "Настройка конфигурации 3proxy..."
+function install_3proxy_binaries() {
+    echo "Установка 3proxy..."
+    mkdir -p $BIN_DIR
+    cp -r 3proxy/bin/* $BIN_DIR/
+}
 
-    # Вопросы для установки
-    read -p "Сколько серверов будет в цепочке? (1-10): " SERVER_COUNT
-    read -p "Какой по счету сервер вы сейчас настраиваете? (1-$SERVER_COUNT): " CURRENT_SERVER
-    if [[ "$CURRENT_SERVER" -eq "$SERVER_COUNT" ]]; then
-        read -p "Введите имя хоста для TLS (например, proxy.example.com): " TLS_HOST
-        sudo openssl req -x509 -newkey rsa:4096 -keyout /etc/3proxy/3proxy.key -out /etc/3proxy/3proxy.crt -days 365 -nodes
-    else
-        read -p "Введите IP следующего сервера в цепочке: " NEXT_SERVER_IP
-    fi
+function create_config_file() {
+    echo "Создание конфигурационного файла..."
+    PORT=${1:-$DEFAULT_PROXY_PORT}
+    ENABLE_LOG=${2:-"y"}
 
-    read -p "Введите порт для текущего сервера (по умолчанию: 1080): " PROXY_PORT
-    PROXY_PORT=${PROXY_PORT:-1080}
-
-    # Логирование
-    read -p "Включить логирование? (y/n): " ENABLE_LOG
-    if [[ "$ENABLE_LOG" == "y" ]]; then
+    # Настройка логирования
+    LOG_CONFIG=""
+    if [ "$ENABLE_LOG" == "y" ]; then
         LOG_CONFIG="log $LOG_FILE D
 logformat \"L%d-%m-%Y %H:%M:%S %p %E %u %C:%c %R:%r %O %I %h %T\""
-    else
-        LOG_CONFIG=""
     fi
 
-    # Генерация конфигурации
-    if [[ "$CURRENT_SERVER" -eq "$SERVER_COUNT" ]]; then
-        cat <<EOF | sudo tee "$CONFIG_FILE"
+    cat <<EOF > $CONFIG_FILE
 $LOG_CONFIG
 
 nserver 1.1.1.1
 nserver 8.8.8.8
 timeouts 1 5 30
 auth none
-socks -p$PROXY_PORT -n
-
-tls hostname=$TLS_HOST cert /etc/3proxy/3proxy.crt key /etc/3proxy/3proxy.key
+socks -p$PORT -n
 EOF
-    else
-        cat <<EOF | sudo tee "$CONFIG_FILE"
-$LOG_CONFIG
+}
 
-nserver 1.1.1.1
-nserver 8.8.8.8
-timeouts 1 5 30
-auth none
-socks -p$PROXY_PORT -n
-
-proxy -p3128 -n -a -e$NEXT_SERVER_IP
-EOF
-    fi
-
+function create_systemd_service() {
     echo "Создание службы systemd..."
-    cat <<EOF | sudo tee "$SERVICE_FILE"
+    cat <<EOF > $SERVICE_FILE
 [Unit]
 Description=3proxy Proxy Server
 After=network.target
 
 [Service]
-ExecStart=/usr/local/bin/3proxy $CONFIG_FILE
+ExecStart=$BIN_DIR/3proxy $CONFIG_FILE
 Restart=always
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-    sudo systemctl daemon-reload
-    sudo systemctl enable 3proxy
-    sudo systemctl start 3proxy
-
-    echo "Установка завершена. Прокси запущен на порту $PROXY_PORT."
+    systemctl daemon-reload
+    systemctl enable 3proxy
+    systemctl start 3proxy
 }
 
 function configure_firewall() {
-    echo "Закрытие всех портов, кроме используемого прокси и порта 22 (SSH)..."
-    # Убедимся, что ufw установлен и активен
-    sudo apt update
-    sudo apt install -y ufw
-    sudo ufw allow 22/tcp
-    sudo ufw allow $PROXY_PORT/tcp
-    sudo ufw default deny incoming
-    sudo ufw default allow outgoing
-    sudo ufw enable
-    echo "Firewall настроен: открыт порт 22 и порт $PROXY_PORT."
+    echo "Настройка брандмауэра..."
+    ufw allow 22/tcp
+    ufw allow ${1:-$DEFAULT_PROXY_PORT}/tcp
+    ufw default deny incoming
+    ufw default allow outgoing
+    ufw --force enable
+    echo "Firewall настроен: открыт порт 22 и порт ${1:-$DEFAULT_PROXY_PORT}."
 }
 
-function manage_proxy() {
-    while true; do
-        echo "Меню управления 3proxy:"
-        echo "0. Показать список пользователей"
-        echo "1. Добавить пользователя с выбором типа прокси и авторизации"
-        echo "2. Удалить пользователя"
-        echo "3. Добавить разрешенные IP для подключения к прокси"
-        echo "4. Удалить разрешенные IP для подключения к прокси"
-        echo "5. Показать список разрешенных IP для подключения к прокси"
-        echo "6. Показать список запрещенных IP для подключения к прокси"
-        echo "7. Изменить тип подключения к прокси (IP из белого списка/все IP)"
-        echo "8. Изменить порт подключения к прокси (socks5/https)"
-        echo "9. Включить/отключить логирование"
-        echo "10. Закрыть все порты, кроме используемого прокси и 22"
-        echo "11. Удалить прокси сервер"
-        echo "12. Выход"
-        read -p "Выберите действие: " ACTION
+function setup_3proxy() {
+    echo "Начало настройки 3proxy..."
 
-        case $ACTION in
-        0)
-            echo "Список пользователей:"
-            grep "^users" "$CONFIG_FILE" || echo "Пользователи не настроены."
-            ;;
-        1)
-            read -p "Введите имя пользователя: " USERNAME
-            read -p "Введите пароль: " PASSWORD
-            echo "users $USERNAME:CL:$PASSWORD" | sudo tee -a "$CONFIG_FILE"
-            sudo systemctl restart 3proxy
-            echo "Пользователь $USERNAME добавлен."
-            ;;
-        2)
-            read -p "Введите имя пользователя для удаления: " USERNAME
-            sudo sed -i "/users $USERNAME:/d" "$CONFIG_FILE"
-            sudo systemctl restart 3proxy
-            echo "Пользователь $USERNAME удалён."
-            ;;
-        3)
-            read -p "Введите IP для разрешения: " ALLOWED_IP
-            echo "allow * * $ALLOWED_IP" | sudo tee -a "$CONFIG_FILE"
-            sudo systemctl restart 3proxy
-            echo "IP $ALLOWED_IP добавлен в белый список."
-            ;;
-        4)
-            read -p "Введите IP для удаления из разрешенных: " REMOVED_IP
-            sudo sed -i "/allow \* \* $REMOVED_IP/d" "$CONFIG_FILE"
-            sudo systemctl restart 3proxy
-            echo "IP $REMOVED_IP удален из белого списка."
-            ;;
-        5)
-            echo "Список разрешенных IP:"
-            grep "^allow" "$CONFIG_FILE" || echo "Разрешенные IP отсутствуют."
-            ;;
-        6)
-            echo "Список запрещенных IP:"
-            grep "^deny" "$CONFIG_FILE" || echo "Запрещенные IP отсутствуют."
-            ;;
-        7)
-            read -p "Разрешить подключение для всех IP? (y/n): " ALLOW_ALL
-            if [[ "$ALLOW_ALL" == "y" ]]; then
-                sudo sed -i "/allow/d" "$CONFIG_FILE"
-                echo "allow *" | sudo tee -a "$CONFIG_FILE"
-                echo "Подключение разрешено для всех IP."
-            else
-                echo "Текущие настройки белого списка IP сохранены."
-            fi
-            sudo systemctl restart 3proxy
-            ;;
-        8)
-            read -p "Введите новый порт подключения (по умолчанию 1080): " NEW_PORT
-            NEW_PORT=${NEW_PORT:-1080}
-            sudo sed -i "s/-p[0-9]\+/ -p$NEW_PORT/" "$CONFIG_FILE"
-            sudo systemctl restart 3proxy
-            echo "Порт изменен на $NEW_PORT."
-            ;;
-        9)
-            read -p "Включить логирование? (y/n): " ENABLE_LOG
-            if [[ "$ENABLE_LOG" == "y" ]]; then
-                echo "log $LOG_FILE D" | sudo tee -a "$CONFIG_FILE"
-                echo "logformat \"L%d-%m-%Y %H:%M:%S %p %E %u %C:%c %R:%r %O %I %h %T\"" | sudo tee -a "$CONFIG_FILE"
-                echo "Логирование включено."
-            else
-                sudo sed -i "/log /d" "$CONFIG_FILE"
-                sudo sed -i "/logformat/d" "$CONFIG_FILE"
-                echo "Логирование отключено."
-            fi
-            sudo systemctl restart 3proxy
-            ;;
-        10)
-            configure_firewall
-            ;;
-        11)
-            echo "Удаление 3proxy..."
-            sudo systemctl stop 3proxy
-            sudo systemctl disable 3proxy
-            sudo rm -f "$CONFIG_FILE" "$SERVICE_FILE" "$LOG_FILE"
-            echo "3proxy удален."
-            ;;
-        12)
-            echo "Выход."
-            break
-            ;;
-        *)
-            echo "Некорректный ввод. Повторите попытку."
-            ;;
-        esac
-    done
+    # Скачивание и компиляция
+    clone_and_build_3proxy
+
+    # Установка бинарников
+    install_3proxy_binaries
+
+    # Создание файла конфигурации
+    create_config_file "$DEFAULT_PROXY_PORT" "y"
+
+    # Настройка службы systemd
+    create_systemd_service
+
+    # Настройка брандмауэра
+    configure_firewall "$DEFAULT_PROXY_PORT"
+
+    echo "3proxy успешно установлен и настроен."
 }
 
-if check_installed; then
-    manage_proxy
-else
-    install_3proxy
-    setup_proxy
+# Проверка: если уже установлен, то ничего не делаем
+if [ -f "$CONFIG_FILE" ]; then
+    echo "3proxy уже установлен. Конфигурация находится в $CONFIG_FILE."
+    echo "Вы можете изменить настройки вручную или удалить 3proxy перед повторной установкой."
+    exit 0
 fi
+
+# Выполнение установки
+install_dependencies
+setup_3proxy
