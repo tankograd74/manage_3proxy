@@ -1,148 +1,80 @@
-#!/bin/bash
+<?php
 
-# Прекращение выполнения при ошибке
-set -e
-
-INFO="\033[1;32m[INFO]\033[0m"
-ERROR="\033[1;31m[ERROR]\033[0m"
-
-echo -e "${INFO} Установка необходимых пакетов..."
-apt update && apt install -y build-essential git openssl ufw curl
-
-# Настройка UFW
-configure_ufw() {
-    echo -e "${INFO} Настройка UFW..."
-    ufw allow ssh
-    ufw allow 3128/tcp
-    ufw --force enable
-    echo -e "${INFO} UFW настроен!"
+function runCommand($command) {
+    echo "Running command: $command\n";
+    $output = [];
+    $return_var = 0;
+    exec($command, $output, $return_var);
+    if ($return_var !== 0) {
+        echo "Command failed: $command\n";
+        echo implode("\n", $output) . "\n";
+        exit($return_var);
+    }
+    echo implode("\n", $output) . "\n";
 }
 
-# Скачивание и компиляция 3proxy
-setup_3proxy() {
-    echo -e "${INFO} Скачивание и компиляция 3proxy..."
+function install3Proxy() {
+    // Update package list and install dependencies
+    runCommand('sudo apt-get update');
+    runCommand('sudo apt-get install -y build-essential wget');
 
-    if [ -d "3proxy" ]; then
-        echo -e "${INFO} Удаление старой версии 3proxy..."
-        rm -rf 3proxy
-    fi
+    // Download and extract 3proxy
+    runCommand('wget https://github.com/3proxy/3proxy/archive/refs/tags/0.9.3.tar.gz');
+    runCommand('tar xzf 0.9.3.tar.gz');
 
-    git clone https://github.com/z3APA3A/3proxy.git
+    // Build 3proxy
+    chdir('3proxy-0.9.3');
+    runCommand('make -f Makefile.Linux');
 
-    cd 3proxy/src
+    // Create necessary directories and copy files
+    runCommand('sudo mkdir -p /usr/local/3proxy/bin');
+    runCommand('sudo mkdir -p /usr/local/3proxy/logs');
+    runCommand('sudo mkdir -p /usr/local/3proxy/conf');
+    runCommand('sudo cp src/3proxy /usr/local/3proxy/bin/');
 
-    # Проверка Makefile.Linux
-    if [ ! -f "Makefile.Linux" ]; then
-        echo -e "${INFO} Makefile.Linux отсутствует. Загружаем из резервного источника..."
-        curl -o Makefile.Linux https://raw.githubusercontent.com/z3APA3A/3proxy/master/src/Makefile.Linux
-        if [ ! -f "Makefile.Linux" ]; then
-            echo -e "${ERROR} Не удалось загрузить Makefile.Linux. Проверьте доступность файла."
-            exit 1
-        fi
-    fi
+    // Create a sample configuration file
+    $config = <<<EOL
+daemon
+maxconn 1024
+nserver 8.8.8.8
+nserver 8.8.4.4
+nscache 65536
+timeouts 1 5 30 60 180 1800 15 60
+auth none
+allow *
+proxy -p8080
+flush
+EOL;
+    file_put_contents('/tmp/3proxy.cfg', $config);
+    runCommand('sudo mv /tmp/3proxy.cfg /usr/local/3proxy/conf/3proxy.cfg');
 
-    # Компиляция
-    make -f Makefile.Linux CFLAGS="-Wno-format -Wno-unused-result"
-    echo -e "${INFO} Компиляция 3proxy завершена."
-
-    # Установка бинарных файлов
-    mkdir -p /usr/local/bin /etc/3proxy /var/log/3proxy
-    cp ../bin/3proxy /usr/local/bin/
-    chmod +x /usr/local/bin/3proxy
-
-    # Установка конфигурации
-    cp ../examples/3proxy.cfg /etc/3proxy/3proxy.cfg
-    chmod 644 /etc/3proxy/3proxy.cfg
-
-    echo -e "${INFO} 3proxy успешно установлен."
-    cd ../..
-}
-
-# Настройка службы systemd
-configure_systemd() {
-    echo -e "${INFO} Создание службы systemd для 3proxy..."
-
-    cat <<EOF > /etc/systemd/system/3proxy.service
+    // Create systemd service file
+    $serviceFile = <<<EOL
 [Unit]
-Description=3proxy proxy server
+Description=3proxy Proxy Server
 After=network.target
 
 [Service]
-ExecStart=/usr/local/bin/3proxy /etc/3proxy/3proxy.cfg
-Restart=on-failure
+ExecStart=/usr/local/3proxy/bin/3proxy /usr/local/3proxy/conf/3proxy.cfg
+ExecReload=/bin/kill -HUP \$MAINPID
+KillMode=process
+Restart=always
+Type=simple
 
 [Install]
 WantedBy=multi-user.target
-EOF
+EOL;
+    file_put_contents('/tmp/3proxy.service', $serviceFile);
+    runCommand('sudo mv /tmp/3proxy.service /etc/systemd/system/3proxy.service');
 
-    chmod 644 /etc/systemd/system/3proxy.service
-    systemctl daemon-reload
-    systemctl enable 3proxy
-    echo -e "${INFO} Служба 3proxy создана и активирована."
+    // Reload systemd, enable and start 3proxy service
+    runCommand('sudo systemctl daemon-reload');
+    runCommand('sudo systemctl enable 3proxy');
+    runCommand('sudo systemctl start 3proxy');
+
+    echo "3proxy has been installed and started successfully.\n";
 }
 
-# Настройка пользователей
-configure_users() {
-    echo -e "${INFO} Настройка пользователей для 3proxy..."
-    cat <<EOF > /etc/3proxy/usersfile
-user1:CL:password1
-user2:CL:password2
-EOF
-    chmod 600 /etc/3proxy/usersfile
-    echo -e "${INFO} Пользователи добавлены."
-}
+install3Proxy();
 
-# Добавление ротации логов
-setup_log_rotation() {
-    echo -e "${INFO} Настройка ротации логов..."
-    cat <<EOF > /etc/logrotate.d/3proxy
-/var/log/3proxy/*.log {
-    daily
-    missingok
-    rotate 7
-    compress
-    delaycompress
-    notifempty
-    create 640 root adm
-    sharedscripts
-    postrotate
-        systemctl restart 3proxy > /dev/null 2>&1 || true
-    endscript
-}
-EOF
-    echo -e "${INFO} Ротация логов настроена."
-}
-
-# Запуск службы
-start_3proxy() {
-    echo -e "${INFO} Запуск службы 3proxy..."
-    systemctl start 3proxy
-    systemctl status 3proxy --no-pager
-    echo -e "${INFO} 3proxy запущен."
-}
-
-# Проверка доступности 3proxy
-test_proxy() {
-    echo -e "${INFO} Проверка доступности 3proxy..."
-    curl -x http://127.0.0.1:3128 -U user1:password1 http://example.com
-    if [ $? -eq 0 ]; then
-        echo -e "${INFO} 3proxy успешно проверен. Прокси работает."
-    else
-        echo -e "${ERROR} Ошибка проверки 3proxy. Проверьте настройки."
-    fi
-}
-
-# Основной процесс
-main() {
-    configure_ufw
-    setup_3proxy
-    configure_systemd
-    configure_users
-    setup_log_rotation
-    start_3proxy
-    test_proxy
-    echo -e "${INFO} Установка и настройка 3proxy завершена успешно!"
-}
-
-# Запуск основного процесса
-main
+?>
