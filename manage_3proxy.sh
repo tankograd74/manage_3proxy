@@ -49,6 +49,22 @@ EOL
     systemctl restart squid
 }
 
+# Функция для удаления Squid
+remove_proxy() {
+    apt remove --purge squid -y
+    rm -rf /etc/squid
+    echo "[INFO] Прокси сервер удален."
+}
+
+# Функция для переустановки Squid
+reinstall_proxy() {
+    echo "[INFO] Переустановка Squid..."
+    remove_proxy
+    install_proxy
+    configure_proxy
+    echo "[INFO] Переустановка завершена."
+}
+
 # Меню управления сервером
 manage_proxy() {
     while true; do
@@ -63,7 +79,8 @@ manage_proxy() {
         echo "7. Изменить порт подключения к прокси (socks5/https)."
         echo "8. Включить/отключить логирование."
         echo "9. Удалить прокси сервер."
-        echo "10. Выйти из меню."
+        echo "10. Переустановить сервер."
+        echo "11. Выйти из меню."
         read -p "Выберите опцию: " choice
 
         case $choice in
@@ -126,12 +143,14 @@ manage_proxy() {
             systemctl restart squid
             ;;
         9)
-            apt remove --purge squid -y
-            rm -rf /etc/squid
-            echo "Прокси сервер удален."
+            remove_proxy
             break
             ;;
         10)
+            reinstall_proxy
+            break
+            ;;
+        11)
             echo "Выход из меню."
             break
             ;;
