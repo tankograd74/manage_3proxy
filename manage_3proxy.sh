@@ -31,19 +31,18 @@ setup_3proxy() {
 
     cd 3proxy/src
 
-    # Проверка Makefile
+    # Проверка Makefile.Linux
     if [ ! -f "Makefile.Linux" ]; then
-        echo -e "${INFO} Makefile.Linux отсутствует. Попробуем использовать Makefile..."
-        if [ -f "Makefile" ]; then
-            echo -e "${INFO} Используется Makefile для сборки."
-        else
-            echo -e "${ERROR} Makefile и Makefile.Linux отсутствуют. Проверьте репозиторий 3proxy."
+        echo -e "${INFO} Makefile.Linux отсутствует. Загружаем из резервного источника..."
+        curl -o Makefile.Linux https://raw.githubusercontent.com/z3APA3A/3proxy/master/src/Makefile.Linux
+        if [ ! -f "Makefile.Linux" ]; then
+            echo -e "${ERROR} Не удалось загрузить Makefile.Linux. Проверьте доступность файла."
             exit 1
         fi
     fi
 
     # Компиляция
-    make CFLAGS="-Wno-format -Wno-unused-result"
+    make -f Makefile.Linux CFLAGS="-Wno-format -Wno-unused-result"
     echo -e "${INFO} Компиляция 3proxy завершена."
 
     # Установка бинарных файлов
