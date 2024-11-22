@@ -1,80 +1,64 @@
-<?php
+#!/bin/bash
 
-function runCommand($command) {
-    echo "Running command: $command\n";
-    $output = [];
-    $return_var = 0;
-    exec($command, $output, $return_var);
-    if ($return_var !== 0) {
-        echo "Command failed: $command\n";
-        echo implode("\n", $output) . "\n";
-        exit($return_var);
-    }
-    echo implode("\n", $output) . "\n";
-}
+set -e
 
-function install3Proxy() {
-    // Update package list and install dependencies
-    runCommand('sudo apt-get update');
-    runCommand('sudo apt-get install -y build-essential wget');
+VERSION="0.9.4"
+BASE_URL="https://github.com/z3APA3A/3proxy/archive/"
+CONFIG_URL="https://github.com/SnoyIatk/3proxy/raw/master/"
+INIT_SCRIPT_URL="https://raw.github.com/SnoyIatk/3proxy/master/3proxy"
+INSTALL_DIR="/etc/3proxy"
+LOG_DIR="/var/log/3proxy"
 
-    // Download and extract 3proxy
-    runCommand('wget https://github.com/3proxy/3proxy/archive/refs/tags/0.9.3.tar.gz');
-    runCommand('tar xzf 0.9.3.tar.gz');
+INFO="\033[1;32m[INFO]\033[0m"
+ERROR="\033[1;31m[ERROR]\033[0m"
 
-    // Build 3proxy
-    chdir('3proxy-0.9.3');
-    runCommand('make -f Makefile.Linux');
+# Установка необходимых пакетов
+echo -e "${INFO} Установка необходимых пакетов..."
+apt update && apt install -y gcc make git wget
 
-    // Create necessary directories and copy files
-    runCommand('sudo mkdir -p /usr/local/3proxy/bin');
-    runCommand('sudo mkdir -p /usr/local/3proxy/logs');
-    runCommand('sudo mkdir -p /usr/local/3proxy/conf');
-    runCommand('sudo cp src/3proxy /usr/local/3proxy/bin/');
+# Скачивание и распаковка 3proxy
+echo -e "${INFO} Скачивание и распаковка 3proxy версии ${VERSION}..."
+wget --no-check-certificate -O "3proxy-${VERSION}.tar.gz" "${BASE_URL}${VERSION}.tar.gz"
+tar xzf "3proxy-${VERSION}.tar.gz"
 
-    // Create a sample configuration file
-    $config = <<<EOL
-daemon
-maxconn 1024
-nserver 8.8.8.8
-nserver 8.8.4.4
-nscache 65536
-timeouts 1 5 30 60 180 1800 15 60
-auth none
-allow *
-proxy -p8080
-flush
-EOL;
-    file_put_contents('/tmp/3proxy.cfg', $config);
-    runCommand('sudo mv /tmp/3proxy.cfg /usr/local/3proxy/conf/3proxy.cfg');
+# Компиляция 3proxy
+echo -e "${INFO} Компиляция 3proxy..."
+cd "3proxy-${VERSION}"
+make -f Makefile.Linux
 
-    // Create systemd service file
-    $serviceFile = <<<EOL
-[Unit]
-Description=3proxy Proxy Server
-After=network.target
+# Создание директорий
+echo -e "${INFO} Создание директорий..."
+mkdir -p "${INSTALL_DIR}" "${LOG_DIR}"
 
-[Service]
-ExecStart=/usr/local/3proxy/bin/3proxy /usr/local/3proxy/conf/3proxy.cfg
-ExecReload=/bin/kill -HUP \$MAINPID
-KillMode=process
-Restart=always
-Type=simple
+# Перемещение файлов
+echo -e "${INFO} Перемещение файлов 3proxy..."
+mv src/3proxy "${INSTALL_DIR}/"
 
-[Install]
-WantedBy=multi-user.target
-EOL;
-    file_put_contents('/tmp/3proxy.service', $serviceFile);
-    runCommand('sudo mv /tmp/3proxy.service /etc/systemd/system/3proxy.service');
+# Скачивание конфигурации
+echo -e "${INFO} Скачивание конфигурации..."
+wget --no-check-certificate "${CONFIG_URL}3proxy.cfg" -O "${INSTALL_DIR}/3proxy.cfg"
+chmod 600 "${INSTALL_DIR}/3proxy.cfg"
 
-    // Reload systemd, enable and start 3proxy service
-    runCommand('sudo systemctl daemon-reload');
-    runCommand('sudo systemctl enable 3proxy');
-    runCommand('sudo systemctl start 3proxy');
+wget --no-check-certificate "${CONFIG_URL}.proxyauth" -O "${INSTALL_DIR}/.proxyauth"
+chmod 600 "${INSTALL_DIR}/.proxyauth"
 
-    echo "3proxy has been installed and started successfully.\n";
-}
+# Настройка службы
+echo -e "${INFO} Настройка службы 3proxy..."
+wget --no-check-certificate "${INIT_SCRIPT_URL}" -O /etc/init.d/3proxy
+chmod +x /etc/init.d/3proxy
+update-rc.d 3proxy defaults
 
-install3Proxy();
+# Удаление временных файлов
+cd ..
+rm -rf "3proxy-${VERSION}" "3proxy-${VERSION}.tar.gz"
 
-?>
+# Запуск 3proxy
+echo -e "${INFO} Запуск 3proxy..."
+/etc/init.d/3proxy start
+
+# Проверка статуса
+if pgrep -x "3proxy" > /dev/null; then
+    echo -e "${INFO} 3proxy успешно установлен и запущен."
+else
+    echo -e "${ERROR} Ошибка запуска 3proxy. Проверьте конфигурацию."
+fi
