@@ -31,23 +31,19 @@ setup_3proxy() {
 
     cd 3proxy/src
 
-    # Проверка и создание Makefile.var
-    if [ ! -f "Makefile.var" ]; then
-        echo -e "${INFO} Makefile.var отсутствует. Создаём файл..."
-        cat <<EOF > Makefile.var
-CC = gcc
-LD = gcc
-AR = ar
-CFLAGS = -g -fPIC -O2 -fno-strict-aliasing
-LDFLAGS =
-ARFLAGS = rc
-RANLIB = ranlib
-EOF
-        echo -e "${INFO} Makefile.var создан."
+    # Проверка Makefile
+    if [ ! -f "Makefile.Linux" ]; then
+        echo -e "${INFO} Makefile.Linux отсутствует. Попробуем использовать Makefile..."
+        if [ -f "Makefile" ]; then
+            echo -e "${INFO} Используется Makefile для сборки."
+        else
+            echo -e "${ERROR} Makefile и Makefile.Linux отсутствуют. Проверьте репозиторий 3proxy."
+            exit 1
+        fi
     fi
 
     # Компиляция
-    make -f Makefile.Linux CFLAGS="-Wno-format -Wno-unused-result"
+    make CFLAGS="-Wno-format -Wno-unused-result"
     echo -e "${INFO} Компиляция 3proxy завершена."
 
     # Установка бинарных файлов
