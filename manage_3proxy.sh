@@ -3,15 +3,13 @@
 # Прекращение выполнения при ошибке
 set -e
 
-# Цветной вывод
 INFO="\033[1;32m[INFO]\033[0m"
 ERROR="\033[1;31m[ERROR]\033[0m"
-RESET="\033[0m"
 
 echo -e "${INFO} Установка необходимых пакетов..."
 apt update && apt install -y build-essential git openssl ufw curl
 
-# Функция для настройки UFW
+# Настройка UFW
 configure_ufw() {
     echo -e "${INFO} Настройка UFW..."
     ufw allow ssh
@@ -31,23 +29,39 @@ setup_3proxy() {
 
     git clone https://github.com/z3APA3A/3proxy.git
 
-    cd 3proxy
-    make -C src CFLAGS="-Wno-format -Wno-unused-result"
+    cd 3proxy/src
+
+    # Проверка и создание Makefile.var
+    if [ ! -f "Makefile.var" ]; then
+        echo -e "${INFO} Makefile.var отсутствует. Создаём файл..."
+        cat <<EOF > Makefile.var
+CC = gcc
+LD = gcc
+AR = ar
+CFLAGS = -g -fPIC -O2 -fno-strict-aliasing
+LDFLAGS =
+ARFLAGS = rc
+RANLIB = ranlib
+EOF
+        echo -e "${INFO} Makefile.var создан."
+    fi
+
+    make CFLAGS="-Wno-format -Wno-unused-result"
     echo -e "${INFO} Компиляция 3proxy завершена."
 
     # Установка бинарных файлов
     mkdir -p /usr/local/bin /etc/3proxy /var/log/3proxy
-    cp bin/3proxy /usr/local/bin/
-    cp bin/mycrypt /usr/local/bin/
-    cp bin/proxy /usr/local/bin/
+    cp ../bin/3proxy /usr/local/bin/
+    cp ../bin/mycrypt /usr/local/bin/
+    cp ../bin/proxy /usr/local/bin/
     chmod +x /usr/local/bin/3proxy /usr/local/bin/mycrypt /usr/local/bin/proxy
 
     # Установка конфигурации
-    cp examples/3proxy.cfg /etc/3proxy/3proxy.cfg
+    cp ../examples/3proxy.cfg /etc/3proxy/3proxy.cfg
     chmod 644 /etc/3proxy/3proxy.cfg
 
     echo -e "${INFO} 3proxy успешно установлен."
-    cd ..
+    cd ../..
 }
 
 # Настройка systemd службы
