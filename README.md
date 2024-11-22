@@ -1,5 +1,5 @@
 1. Скачайте скрипт на ваш сервер:
-   wget -O manage_3proxy.sh https://github.com/tankograd74/manage_3proxy/blob/main/manage_3proxy.sh
+   wget -O manage_3proxy.sh https://raw.githubusercontent.com/tankograd74/manage_3proxy/refs/heads/main/manage_3proxy.sh
 
 2. Сделайте файл исполняемым:
    chmod +x manage_3proxy.sh
