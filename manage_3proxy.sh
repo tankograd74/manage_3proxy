@@ -46,15 +46,14 @@ EOF
         echo -e "${INFO} Makefile.var создан."
     fi
 
-    make CFLAGS="-Wno-format -Wno-unused-result"
+    # Компиляция
+    make -f Makefile.Linux CFLAGS="-Wno-format -Wno-unused-result"
     echo -e "${INFO} Компиляция 3proxy завершена."
 
     # Установка бинарных файлов
     mkdir -p /usr/local/bin /etc/3proxy /var/log/3proxy
     cp ../bin/3proxy /usr/local/bin/
-    cp ../bin/mycrypt /usr/local/bin/
-    cp ../bin/proxy /usr/local/bin/
-    chmod +x /usr/local/bin/3proxy /usr/local/bin/mycrypt /usr/local/bin/proxy
+    chmod +x /usr/local/bin/3proxy
 
     # Установка конфигурации
     cp ../examples/3proxy.cfg /etc/3proxy/3proxy.cfg
@@ -64,7 +63,7 @@ EOF
     cd ../..
 }
 
-# Настройка systemd службы
+# Настройка службы systemd
 configure_systemd() {
     echo -e "${INFO} Создание службы systemd для 3proxy..."
 
